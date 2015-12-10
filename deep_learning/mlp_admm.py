@@ -26,7 +26,8 @@ import timeit
 import numpy
 import theano
 import theano.tensor as T
-from logistic_sgd import LogisticRegression, load_data
+from logistic_sgd import load_data
+from mlp import MLP
 
 
 def params_shape_like(params):
@@ -118,97 +119,9 @@ class HiddenLayer(object):
 
 
 # start-snippet-2
-class MLP(object):
-    """Multi-Layer Perceptron Class
 
-    A multilayer perceptron is a feedforward artificial neural network model
-    that has one layer or more of hidden units and nonlinear activations.
-    Intermediate layers usually have as activation function tanh or the
-    sigmoid function (defined here by a ``HiddenLayer`` class)  while the
-    top layer is a softmax layer (defined here by a ``LogisticRegression``
-    class).
-    """
-
-    def __init__(self, rng, input, n_in, n_hidden, n_out):
-        """Initialize the parameters for the multilayer perceptron
-
-        :type rng: numpy.random.RandomState
-        :param rng: a random number generator used to initialize weights
-
-        :type input: theano.tensor.TensorType
-        :param input: symbolic variable that describes the input of the
-        architecture (one minibatch)
-
-        :type n_in: int
-        :param n_in: number of input units, the dimension of the space in
-        which the datapoints lie
-
-        :type n_hidden: int
-        :param n_hidden: number of hidden units
-
-        :type n_out: int
-        :param n_out: number of output units, the dimension of the space in
-        which the labels lie
-
-        """
-
-        # Since we are dealing with a one hidden layer MLP, this will translate
-        # into a HiddenLayer with a tanh activation function connected to the
-        # LogisticRegression layer; the activation function can be replaced by
-        # sigmoid or any other nonlinear function
-        self.hiddenLayer = HiddenLayer(
-            rng=rng,
-            input=input,
-            n_in=n_in,
-            n_out=n_hidden,
-            activation=T.tanh
-        )
-
-        # The logistic regression layer gets as input the hidden units
-        # of the hidden layer
-        self.logRegressionLayer = LogisticRegression(
-            input=self.hiddenLayer.output,
-            n_in=n_hidden,
-            n_out=n_out
-        )
-        # end-snippet-2 start-snippet-3
-        # L1 norm ; one regularization option is to enforce L1 norm to
-        # be small
-        self.L1 = (
-            abs(self.hiddenLayer.W).sum()
-            + abs(self.logRegressionLayer.W).sum()
-        )
-
-        # square of L2 norm ; one regularization option is to enforce
-        # square of L2 norm to be small
-        self.L2_sqr = (
-            (self.hiddenLayer.W ** 2).sum()
-            + (self.logRegressionLayer.W ** 2).sum()
-        )
-
-        # negative log likelihood of the MLP is given by the negative
-        # log likelihood of the output of the model, computed in the
-        # logistic regression layer
-        self.negative_log_likelihood = (
-            self.logRegressionLayer.negative_log_likelihood
-        )
-        # same holds for the function computing the number of errors
-        self.errors = self.logRegressionLayer.errors
-
-        # the parameters of the model are the parameters of the two layer it is
-        # made out of
-        self.params = self.hiddenLayer.params + self.logRegressionLayer.params
-        # end-snippet-3
-
-        # keep track of model input
-        self.input = input
-
-    def augment(self, params, w):
-        return numpy.sum([((x[0] - x[1] + x[2]) ** 2).sum() for x in zip(self.params, params, w)])
-
-
-def test_mlp_admm(learning_rate=0.5, L1_reg=0.00, L2_reg=0.000, n_epochs=1000,
-                  dataset='mnist.pkl.gz', batch_size=1000, n_hidden=500, rho=0.00):
+def test_mlp_admm(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
+                  dataset='mnist.pkl.gz', batch_size=1000, n_hidden=500, rho=0.005):
     """
     Demonstrate stochastic gradient descent optimization for a multilayer
     perceptron
@@ -318,24 +231,6 @@ def test_mlp_admm(learning_rate=0.5, L1_reg=0.00, L2_reg=0.000, n_epochs=1000,
 
     # compiling a Theano function that computes the mistakes that are made
     # by the model on a minibatch
-    test_model = theano.function(
-        inputs=[index],
-        outputs=classifier.errors(y),
-        givens={
-            x: test_set_x[index * batch_size:(index + 1) * batch_size],
-            y: test_set_y[index * batch_size:(index + 1) * batch_size]
-        }
-    )
-
-    validate_model = theano.function(
-        inputs=[index],
-        outputs=classifier.errors(y),
-        givens={
-            x: valid_set_x[index * batch_size:(index + 1) * batch_size],
-            y: valid_set_y[index * batch_size:(index + 1) * batch_size]
-        }
-    )
-
     # start-snippet-5
     # compute the gradient of cost with respect to theta (sotred in params)
     # the resulting gradients will be stored in a list gparams
@@ -425,11 +320,31 @@ def test_mlp_admm(learning_rate=0.5, L1_reg=0.00, L2_reg=0.000, n_epochs=1000,
                     w_params_s[minibatch_index][p_index].get_value(True) + classifier_s[minibatch_index].params[
                         p_index].get_value(True) - classifier.params[p_index].get_value(True))
         print
-        print classifier.params[3].get_value(True)
-        print classifier.logRegressionLayer.b.get_value(True)
-        classifier = set_parameters(classifier, classifier.params)
-        print classifier.params[3].get_value(True)
-        print classifier.logRegressionLayer.b.get_value(True)
+        classifier = MLP(
+            rng=rng,
+            input=x,
+            n_in=28 * 28,
+            n_hidden=n_hidden,
+            n_out=10,
+            params = classifier.params
+        )
+        test_model = theano.function(
+            inputs=[index],
+            outputs=classifier.errors(y),
+            givens={
+                x: test_set_x[index * batch_size:(index + 1) * batch_size],
+                y: test_set_y[index * batch_size:(index + 1) * batch_size]
+            }
+        )
+
+        validate_model = theano.function(
+            inputs=[index],
+            outputs=classifier.errors(y),
+            givens={
+                x: valid_set_x[index * batch_size:(index + 1) * batch_size],
+                y: valid_set_y[index * batch_size:(index + 1) * batch_size]
+            }
+        )
         if epoch % validation_frequency == 0:
             # compute zero-one loss on validation set
             validation_losses = [validate_model(i) for i

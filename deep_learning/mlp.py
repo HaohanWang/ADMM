@@ -130,7 +130,7 @@ class MLP(object):
     class).
     """
 
-    def __init__(self, rng, input, n_in, n_hidden, n_out):
+    def __init__(self, rng, input, n_in, n_hidden, n_out, params=None):
         """Initialize the parameters for the multilayer perceptron
 
         :type rng: numpy.random.RandomState
@@ -157,24 +157,45 @@ class MLP(object):
         # into a HiddenLayer with a tanh activation function connected to the
         # LogisticRegression layer; the activation function can be replaced by
         # sigmoid or any other nonlinear function
-        self.hiddenLayer = HiddenLayer(
-            rng=rng,
-            input=input,
-            n_in=n_in,
-            n_out=n_hidden,
-            activation=T.tanh
-        )
+        if params is None:
+            self.hiddenLayer = HiddenLayer(
+                rng=rng,
+                input=input,
+                n_in=n_in,
+                n_out=n_hidden,
+                activation=T.tanh
+            )
 
-        # The logistic regression layer gets as input the hidden units
-        # of the hidden layer
-        self.logRegressionLayer = LogisticRegression(
-            input=self.hiddenLayer.output,
-            n_in=n_hidden,
-            n_out=n_out
-        )
-        # end-snippet-2 start-snippet-3
-        # L1 norm ; one regularization option is to enforce L1 norm to
-        # be small
+            # The logistic regression layer gets as input the hidden units
+            # of the hidden layer
+            self.logRegressionLayer = LogisticRegression(
+                input=self.hiddenLayer.output,
+                n_in=n_hidden,
+                n_out=n_out
+            )
+        else:
+            self.hiddenLayer = HiddenLayer(
+                rng=rng,
+                input=input,
+                n_in=n_in,
+                n_out=n_hidden,
+                W=params[0],
+                b=params[1],
+                activation=T.tanh
+            )
+
+            # The logistic regression layer gets as input the hidden units
+            # of the hidden layer
+            self.logRegressionLayer = LogisticRegression(
+                input=self.hiddenLayer.output,
+                n_in=n_hidden,
+                W=params[2],
+                b=params[3],
+                n_out=n_out
+            )
+            # end-snippet-2 start-snippet-3
+            # L1 norm ; one regularization option is to enforce L1 norm to
+            # be small
         self.L1 = (
             abs(self.hiddenLayer.W).sum()
             + abs(self.logRegressionLayer.W).sum()
@@ -203,6 +224,9 @@ class MLP(object):
 
         # keep track of model input
         self.input = input
+
+    def augment(self, params, w):
+        return numpy.sum([((x[0] - x[1] + x[2]) ** 2).sum() for x in zip(self.params, params, w)])
 
 
 def test_mlp(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
@@ -268,17 +292,6 @@ def test_mlp(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
         n_hidden=n_hidden,
         n_out=10
     )
-
-    classifier_validate = MLP(
-        rng=rng,
-        input=x,
-        n_in=28 * 28,
-        n_hidden=n_hidden,
-        n_out=10
-    )
-
-
-
     # start-snippet-4
     # the cost we minimize during training is the negative log likelihood of
     # the model plus the regularization terms (L1 and L2); cost is expressed
@@ -292,23 +305,6 @@ def test_mlp(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
 
     # compiling a Theano function that computes the mistakes that are made
     # by the model on a minibatch
-    test_model = theano.function(
-        inputs=[index],
-        outputs=classifier.errors(y),
-        givens={
-            x: test_set_x[index * batch_size:(index + 1) * batch_size],
-            y: test_set_y[index * batch_size:(index + 1) * batch_size]
-        }
-    )
-
-    validate_model = theano.function(
-        inputs=[index],
-        outputs=classifier_validate.errors(y),
-        givens={
-            x: valid_set_x[index * batch_size:(index + 1) * batch_size],
-            y: valid_set_y[index * batch_size:(index + 1) * batch_size]
-        }
-    )
 
     # start-snippet-5
     # compute the gradient of cost with respect to theta (sotred in params)
@@ -371,16 +367,36 @@ def test_mlp(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
         for minibatch_index in xrange(n_train_batches):
 
             minibatch_avg_cost = train_model(minibatch_index)
-            # print minibatch_avg_cost,
+            print minibatch_avg_cost,
             # iteration number
             iter = (epoch - 1) * n_train_batches + minibatch_index
-        # print
-        print classifier.logRegressionLayer.b.get_value(True)
-        for p_index in range(len(classifier.params)):
-            classifier_validate.params[p_index] = theano.shared(classifier.params[p_index].get_value(True))
-        print classifier_validate.logRegressionLayer.b.get_value(True)
-        classifier_validate = set_parameters(classifier_validate, classifier.params)
-        print classifier_validate.logRegressionLayer.b.get_value(True)
+        print
+        # for p_index in range(len(classifier.params)):
+        #     classifier_validate.params[p_index] = theano.shared(classifier.params[p_index].get_value(True))
+        classifier_validate = MLP(
+            rng=rng,
+            input=x,
+            n_in=28 * 28,
+            n_hidden=n_hidden,
+            n_out=10,
+            params = classifier.params
+        )
+        validate_model = theano.function(
+            inputs=[index],
+            outputs=classifier_validate.errors(y),
+            givens={
+                x: valid_set_x[index * batch_size:(index + 1) * batch_size],
+                y: valid_set_y[index * batch_size:(index + 1) * batch_size]
+            }
+        )
+        test_model = theano.function(
+            inputs=[index],
+            outputs=classifier_validate.errors(y),
+            givens={
+                x: test_set_x[index * batch_size:(index + 1) * batch_size],
+                y: test_set_y[index * batch_size:(index + 1) * batch_size]
+            }
+        )
         if epoch % validation_frequency == 0:
             # compute zero-one loss on validation set
             validation_losses = [validate_model(i) for i
