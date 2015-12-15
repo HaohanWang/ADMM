@@ -24,6 +24,8 @@ import os
 import sys
 import timeit
 import numpy
+import time
+
 import theano
 import theano.tensor as T
 from logistic_sgd import load_data
@@ -120,8 +122,8 @@ class HiddenLayer(object):
 
 # start-snippet-2
 
-def test_mlp_admm(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
-                  dataset='mnist.pkl.gz', batch_size=1000, n_hidden=500, rho=0.005):
+def test_mlp_admm(learning_rate=0.5, L1_reg=0.00, L2_reg=0.0001, n_epochs=30000,
+                  dataset='mnist.pkl.gz', batch_size=1000, n_hidden=500, rho=0.05):
     """
     Demonstrate stochastic gradient descent optimization for a multilayer
     perceptron
@@ -149,6 +151,8 @@ def test_mlp_admm(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
 
 
    """
+
+    f = open('result.txt', 'w')
     datasets = load_data(dataset)
 
     train_set_x, train_set_y = datasets[0]
@@ -299,12 +303,12 @@ def test_mlp_admm(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
     done_looping = False
 
     while (epoch < n_epochs) and (not done_looping):
+        updating_start_time = time.time()
         epoch = epoch + 1
         tmp = params_shape_like(classifier.params)
         for minibatch_index in xrange(n_train_batches):
             minibatch_avg_cost = train_model_s[minibatch_index](minibatch_index)
-            print minibatch_avg_cost,
-            # iteration number
+            # print minibatch_avg_cost,
             iter = (epoch - 1) * n_train_batches + minibatch_index
             for p_index in range(len(classifier_s[minibatch_index].params)):
                 tmp[p_index] = theano.shared(
@@ -319,7 +323,10 @@ def test_mlp_admm(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
                 w_params_s[minibatch_index][p_index] = theano.shared(
                     w_params_s[minibatch_index][p_index].get_value(True) + classifier_s[minibatch_index].params[
                         p_index].get_value(True) - classifier.params[p_index].get_value(True))
-        print
+        # print
+        updating_time = time.time() - updating_start_time
+        print 'updating time usage:', updating_time/n_train_batches
+        f.writelines('updating time usage:' + str(updating_time/n_train_batches)+'\n')
         classifier = MLP(
             rng=rng,
             input=x,
@@ -345,6 +352,30 @@ def test_mlp_admm(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
                 y: valid_set_y[index * batch_size:(index + 1) * batch_size]
             }
         )
+
+        for i in range(n_train_batches):
+            classifier_s[i] = MLP(
+                rng=rng,
+                input=x,
+                n_in=28 * 28,
+                n_hidden=n_hidden,
+                n_out=10,
+                params=classifier_s[i].params)
+            cost_s[i] = classifier_s[i].negative_log_likelihood(y) \
+                          + L1_reg * classifier_s[i].L1 \
+                          + L2_reg * classifier_s[i].L2_sqr \
+                          + 0.5 * rho * classifier_s[i].augment(classifier.params, w_params_s[i])
+            gparams_s[i] = [T.grad(cost_s[i], param) for param in classifier_s[i].params]
+            updates_s[i] = [(param, param - learning_rate * gparam)
+                                 for param, gparam in zip(classifier_s[i].params, gparams_s[i])]
+            train_model_s[i] = theano.function(
+                inputs=[index],
+                outputs=cost_s[i],
+                updates=updates_s[i],
+                givens={
+                    x: train_set_x[index * batch_size: (index + 1) * batch_size],
+                    y: train_set_y[index * batch_size: (index + 1) * batch_size]
+                })
         if epoch % validation_frequency == 0:
             # compute zero-one loss on validation set
             validation_losses = [validate_model(i) for i
@@ -360,6 +391,7 @@ def test_mlp_admm(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
                     this_validation_loss * 100.
                 )
             )
+            f.writelines('validation error:' + str(this_validation_loss * 100.) + '\n')
 
             # if we got the best validation score until now
             if this_validation_loss < best_validation_loss:
@@ -382,6 +414,7 @@ def test_mlp_admm(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
                        'best model %f %%') %
                       (epoch, minibatch_index + 1, n_train_batches,
                        test_score * 100.))
+                f.writelines('test error:' + str(test_score * 100.) + '\n')
 
             if patience <= iter:
                 done_looping = True

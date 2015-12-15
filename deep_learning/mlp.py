@@ -29,6 +29,7 @@ import numpy
 
 import theano
 import theano.tensor as T
+import time
 
 
 from logistic_sgd import LogisticRegression, load_data
@@ -229,7 +230,7 @@ class MLP(object):
         return numpy.sum([((x[0] - x[1] + x[2]) ** 2).sum() for x in zip(self.params, params, w)])
 
 
-def test_mlp(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
+def test_mlp(learning_rate=0.5, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
              dataset='mnist.pkl.gz', batch_size=1000, n_hidden=500):
     """
     Demonstrate stochastic gradient descent optimization for a multilayer
@@ -341,7 +342,6 @@ def test_mlp(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
     # TRAIN MODEL #
     ###############
     print '... training'
-
     # early-stopping parameters
     patience = 10000  # look as this many examples regardless
     patience_increase = 2  # wait this much longer when a new best is
@@ -363,6 +363,7 @@ def test_mlp(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
     done_looping = False
 
     while (epoch < n_epochs) and (not done_looping):
+        updating_start_time = time.time()
         epoch = epoch + 1
         for minibatch_index in xrange(n_train_batches):
 
@@ -371,6 +372,8 @@ def test_mlp(learning_rate=0.01, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
             # iteration number
             iter = (epoch - 1) * n_train_batches + minibatch_index
         print
+        updating_time = time.time() - updating_start_time
+        print 'updating time usage:', updating_time
         # for p_index in range(len(classifier.params)):
         #     classifier_validate.params[p_index] = theano.shared(classifier.params[p_index].get_value(True))
         classifier_validate = MLP(
