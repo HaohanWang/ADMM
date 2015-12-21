@@ -226,9 +226,14 @@ class MLP(object):
         # keep track of model input
         self.input = input
 
-    def augment(self, params, w):
-        return numpy.sum([((x[0] - x[1] + x[2]) ** 2).sum() for x in zip(self.params, params, w)])
+    def augment(self, aug1, aug2):
+        return numpy.sum([((x[0] - x[1] + x[2]) ** 2).sum() for x in zip(self.params, aug1, aug2)])
 
+    # def update(self):
+    #     self.hiddenLayer.W = self.updates[0]
+    #     self.hiddenLayer.b = self.updates[1]
+    #     self.logRegressionLayer.W = self.updates[2]
+    #     self.logRegressionLayer.b = self.updates[3]
 
 def test_mlp(learning_rate=0.5, L1_reg=0.00, L2_reg=0.0001, n_epochs=1000,
              dataset='mnist.pkl.gz', batch_size=1000, n_hidden=500):

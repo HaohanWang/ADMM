@@ -25,17 +25,30 @@ import sys
 import timeit
 import numpy
 import time
-
 import theano
 import theano.tensor as T
 from logistic_sgd import load_data
 from mlp import MLP
 
 
-def params_shape_like(params):
+def params_shape_like_shared(params):
     l = []
     for k in params:
         l.append(theano.shared(numpy.zeros_like(k.get_value(True))))
+    return l
+
+
+def params_shape_like(params):
+    l = []
+    for k in params:
+        l.append(numpy.zeros_like(k.get_value(True)))
+    return l
+
+def params_shape_like_noise(params):
+    l = []
+    numpy.random.seed(1)
+    for k in params:
+        l.append(numpy.random.random(k.get_value(True).shape))
     return l
 
 def set_parameters(clf, params):
@@ -174,6 +187,20 @@ def test_mlp_admm(learning_rate=0.5, L1_reg=0.00, L2_reg=0.0001, n_epochs=30000,
     x = T.matrix('x')  # the data is presented as rasterized images
     y = T.ivector('y')  # the labels are presented as 1D vector of
     # [int] labels
+    hw1 = T.matrix('hw1')
+    hb1 = T.dvector('hb1')
+    lw = T.matrix('lw')
+    lb = T.dvector('hb')
+
+    a1_hw1 = T.matrix('a1_hw1')
+    a1_hb1 = T.dvector('a1_hb1')
+    a1_lw = T.matrix('a1_lw')
+    a1_lb = T.dvector('a1_hb')
+
+    a2_hw1 = T.matrix('a2_hw1')
+    a2_hb1 = T.dvector('a2_hb1')
+    a2_lw = T.matrix('a2_lw')
+    a2_lb = T.dvector('a2_hb')
 
     rng = numpy.random.RandomState(1234)
 
@@ -184,6 +211,31 @@ def test_mlp_admm(learning_rate=0.5, L1_reg=0.00, L2_reg=0.0001, n_epochs=30000,
         n_in=28 * 28,
         n_hidden=n_hidden,
         n_out=10
+    )
+
+    update_model = theano.function(
+        inputs=[hw1, hb1, lw, lb],
+        updates=[(param, uparam)
+                 for param, uparam in zip(classifier.params, [hw1, hb1, lw, lb])
+                 ]
+    )
+
+    test_model = theano.function(
+        inputs=[index],
+        outputs=classifier.errors(y),
+        givens={
+            x: test_set_x[index * batch_size:(index + 1) * batch_size],
+            y: test_set_y[index * batch_size:(index + 1) * batch_size]
+        }
+    )
+
+    validate_model = theano.function(
+        inputs=[index],
+        outputs=classifier.errors(y),
+        givens={
+            x: valid_set_x[index * batch_size:(index + 1) * batch_size],
+            y: valid_set_y[index * batch_size:(index + 1) * batch_size]
+        }
     )
 
     classifier_s = []
@@ -204,19 +256,28 @@ def test_mlp_admm(learning_rate=0.5, L1_reg=0.00, L2_reg=0.0001, n_epochs=30000,
         cost_s.append(classifier_s[i].negative_log_likelihood(y)
                       + L1_reg * classifier_s[i].L1
                       + L2_reg * classifier_s[i].L2_sqr
-                      + 0.5 * rho * classifier_s[i].augment(classifier.params, w_params_s[i])
+                      + 0.5 * rho * classifier_s[i].augment([a1_hw1, a1_hb1, a1_lw, a1_lb],
+                                                            [a2_hw1, a2_hb1, a2_lw, a2_lb])
                       )
         gparams_s.append([T.grad(cost_s[i], param) for param in classifier_s[i].params])
         updates_s.append([(param, param - learning_rate * gparam)
-                             for param, gparam in zip(classifier_s[i].params, gparams_s[i])
-                             ])
+                          for param, gparam in zip(classifier_s[i].params, gparams_s[i])
+                          ])
         train_model_s.append(theano.function(
-            inputs=[index],
+            inputs=[index, a1_hw1, a1_hb1, a1_lw, a1_lb, a2_hw1, a2_hb1, a2_lw, a2_lb],
             outputs=cost_s[i],
             updates=updates_s[i],
             givens={
                 x: train_set_x[index * batch_size: (index + 1) * batch_size],
-                y: train_set_y[index * batch_size: (index + 1) * batch_size]
+                y: train_set_y[index * batch_size: (index + 1) * batch_size],
+                # a1_hw1:classifier.params[0],
+                # a1_hb1:classifier.params[1],
+                # a1_lw:classifier.params[2],
+                # a1_lb:classifier.params[3],
+                # a2_hw1:w_params_s[i][0],
+                # a2_hb1:w_params_s[i][1],
+                # a2_lw:w_params_s[i][2],
+                # a2_lb:w_params_s[i][3]
             })
         )
 
@@ -301,81 +362,46 @@ def test_mlp_admm(learning_rate=0.5, L1_reg=0.00, L2_reg=0.0001, n_epochs=30000,
 
     epoch = 0
     done_looping = False
-
+    update_params = params_shape_like(classifier.params)
     while (epoch < n_epochs) and (not done_looping):
         updating_start_time = time.time()
         epoch = epoch + 1
         tmp = params_shape_like(classifier.params)
         for minibatch_index in xrange(n_train_batches):
-            minibatch_avg_cost = train_model_s[minibatch_index](minibatch_index)
+            minibatch_avg_cost = train_model_s[minibatch_index](minibatch_index,
+                                                                update_params[0],
+                                                                update_params[1],
+                                                                update_params[2],
+                                                                update_params[3],
+                                                                w_params_s[minibatch_index][0],
+                                                                w_params_s[minibatch_index][1],
+                                                                w_params_s[minibatch_index][2],
+                                                                w_params_s[minibatch_index][3])
             # print minibatch_avg_cost,
             iter = (epoch - 1) * n_train_batches + minibatch_index
-            for p_index in range(len(classifier_s[minibatch_index].params)):
-                tmp[p_index] = theano.shared(
-                    tmp[p_index].get_value(True) + classifier_s[minibatch_index].params[p_index].get_value(True) +
-                    w_params_s[minibatch_index][p_index].get_value(True))
+            for p_index in range(len(classifier.params)):
+                tmp[p_index] += classifier_s[minibatch_index].params[p_index].get_value(True) + \
+                               w_params_s[minibatch_index][p_index]
+
 
         for p_index in range(len(classifier.params)):
-            classifier.params[p_index] = theano.shared(tmp[p_index].get_value(True) / n_train_batches)
+            update_params[p_index] = tmp[p_index] / n_train_batches
 
         for minibatch_index in xrange(n_train_batches):
             for p_index in range(len(classifier_s[minibatch_index].params)):
-                w_params_s[minibatch_index][p_index] = theano.shared(
-                    w_params_s[minibatch_index][p_index].get_value(True) + classifier_s[minibatch_index].params[
-                        p_index].get_value(True) - classifier.params[p_index].get_value(True))
+                w_params_s[minibatch_index][p_index] += classifier_s[minibatch_index].params[p_index].get_value(True) - \
+                                                        update_params[p_index]
+
+
+        # update_model(update_params[0], update_params[1], update_params[2], update_params[3])
+
+        update_model(update_params[0], update_params[1], update_params[2], update_params[3])
+        # print classifier.params[3].get_value(True)
         # print
         updating_time = time.time() - updating_start_time
-        print 'updating time usage:', updating_time/n_train_batches
-        f.writelines('updating time usage:' + str(updating_time/n_train_batches)+'\n')
-        classifier = MLP(
-            rng=rng,
-            input=x,
-            n_in=28 * 28,
-            n_hidden=n_hidden,
-            n_out=10,
-            params = classifier.params
-        )
-        test_model = theano.function(
-            inputs=[index],
-            outputs=classifier.errors(y),
-            givens={
-                x: test_set_x[index * batch_size:(index + 1) * batch_size],
-                y: test_set_y[index * batch_size:(index + 1) * batch_size]
-            }
-        )
+        print 'updating time usage:', updating_time / n_train_batches
+        f.writelines('updating time usage:' + str(updating_time / n_train_batches) + '\n')
 
-        validate_model = theano.function(
-            inputs=[index],
-            outputs=classifier.errors(y),
-            givens={
-                x: valid_set_x[index * batch_size:(index + 1) * batch_size],
-                y: valid_set_y[index * batch_size:(index + 1) * batch_size]
-            }
-        )
-
-        for i in range(n_train_batches):
-            classifier_s[i] = MLP(
-                rng=rng,
-                input=x,
-                n_in=28 * 28,
-                n_hidden=n_hidden,
-                n_out=10,
-                params=classifier_s[i].params)
-            cost_s[i] = classifier_s[i].negative_log_likelihood(y) \
-                          + L1_reg * classifier_s[i].L1 \
-                          + L2_reg * classifier_s[i].L2_sqr \
-                          + 0.5 * rho * classifier_s[i].augment(classifier.params, w_params_s[i])
-            gparams_s[i] = [T.grad(cost_s[i], param) for param in classifier_s[i].params]
-            updates_s[i] = [(param, param - learning_rate * gparam)
-                                 for param, gparam in zip(classifier_s[i].params, gparams_s[i])]
-            train_model_s[i] = theano.function(
-                inputs=[index],
-                outputs=cost_s[i],
-                updates=updates_s[i],
-                givens={
-                    x: train_set_x[index * batch_size: (index + 1) * batch_size],
-                    y: train_set_y[index * batch_size: (index + 1) * batch_size]
-                })
         if epoch % validation_frequency == 0:
             # compute zero-one loss on validation set
             validation_losses = [validate_model(i) for i
